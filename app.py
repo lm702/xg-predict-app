@@ -45,11 +45,9 @@ away_file = st.sidebar.file_uploader("客队历史数据 (Excel)", type=["xlsx",
 if home_file and away_file:
     if st.sidebar.button("加载数据并初始化"):
         try:
-            # 解析两个文件
             home_df = parse_uploaded_excel(home_file)
             away_df = parse_uploaded_excel(away_file)
             st.session_state.all_matches = build_all_team_matches(home_df, away_df)
-            # 提取球队名称
             teams = set()
             for m in st.session_state.all_matches:
                 teams.add(m['home_team'])
@@ -76,7 +74,6 @@ if len(st.session_state.teams) > 1:
         if home_team == away_team:
             st.error("主客队不能相同。")
         else:
-            # 计算特征
             match_dt = pd.Timestamp(match_date)
             home_f = get_team_features_before(home_team, match_dt, st.session_state.all_matches)
             away_f = get_team_features_before(away_team, match_dt, st.session_state.all_matches)
@@ -88,7 +85,6 @@ if len(st.session_state.teams) > 1:
                 st.session_state.adjusted_lambda = dict(st.session_state.base_lambda)
                 st.session_state.last_home_team = home_team
                 st.session_state.last_away_team = away_team
-                # 生成初步概率
                 st.session_state.prob_matrix = generate_bivariate_poisson(
                     st.session_state.adjusted_lambda['h'],
                     st.session_state.adjusted_lambda['a'], rho=0.15
@@ -139,7 +135,12 @@ if len(st.session_state.teams) > 1:
                         st.session_state.current_features['away'].get('label', 'BALA')))
                 away_injury = st.checkbox("客队核心伤停 (λ×0.80)")
 
-            mot = st.slider("主队战意 (1=无欲求, 5=生死战)", 1, 5, 3)
+            col_mot1, col_mot2 = st.columns(2)
+            with col_mot1:
+                mot_home = st.slider("主队战意 (1=无欲求, 5=生死战)", 1, 5, 3)
+            with col_mot2:
+                mot_away = st.slider("客队战意 (1=无欲求, 5=生死战)", 1, 5, 3)
+
             weather = st.selectbox("天气", ["晴", "雨", "大风"])
             ref = st.selectbox("裁判尺度", ["正常", "严哨", "松哨"])
 
@@ -149,7 +150,8 @@ if len(st.session_state.teams) > 1:
                     base['h'], base['a'],
                     home_style, away_style,
                     home_injury, away_injury,
-                    mot, weather, ref
+                    mot_home, mot_away,   # 传入两个战意值
+                    weather, ref
                 )
                 st.session_state.adjusted_lambda = adj
                 st.session_state.prob_matrix = generate_bivariate_poisson(adj['h'], adj['a'], rho=0.15)
@@ -187,7 +189,7 @@ if len(st.session_state.teams) > 1:
                 for j in range(max_g+1):
                     row.append(round(st.session_state.prob_matrix[i][j]*100, 2))
                 heat_data.append(row)
-            fig = st.dataframe(heat_data, use_container_width=True)
+            st.dataframe(heat_data, use_container_width=True)
             st.caption("行：主队进球  列：客队进球  数值为概率(%)")
 
             # 市场赔率对比

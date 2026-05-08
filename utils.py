@@ -6,7 +6,7 @@ from io import BytesIO
 # ---------- 常量 ----------
 ALPHA = 0.94
 WINDOW = 10
-LEAGUE_AVG_XG = 1.4
+LEAGUE_AVG_XG = 1.4   # 近似联赛平均每队每场 xG
 
 # ---------- 风格修正矩阵 ----------
 STYLE_MATRIX = {
@@ -18,6 +18,7 @@ STYLE_MATRIX = {
     'POSL': {'POS': (0.95, 1.0), 'TRN': (0.80, 1.20), 'GEG': (0.85, 1.10)}
 }
 
+# ---------- 解析上传的 Excel ----------
 def parse_uploaded_excel(uploaded_file):
     """读取上传的Excel，返回标准化DataFrame"""
     df = pd.read_excel(uploaded_file, sheet_name=0)
@@ -85,8 +86,9 @@ def build_all_team_matches(home_df, away_df):
                 continue  # 跳过解析失败的行
     return sorted(matches, key=lambda x: x['date'])
 
-# 其他函数保持不变...
+# ---------- 特征工程 (滚动窗口) ----------
 def get_team_features_before(team, as_of_date, all_matches):
+    """返回球队在 as_of_date 之前的特征字典"""
     team_matches = []
     for m in all_matches:
         if (m['home_team'] == team or m['away_team'] == team) and m['date'] < as_of_date:
@@ -144,14 +146,21 @@ def get_team_features_before(team, as_of_date, all_matches):
         return 'BALA'
 
     return {
-        'lambda_att': lambda_att, 'lambda_def': lambda_def,
-        'lambda_sp_att': lambda_sp_att, 'lambda_sp_def': lambda_sp_def,
-        'conv': conv, 'opp_conv': opp_conv,
-        'penetration': penetration, 'xg_per_touch': xg_per_touch,
-        'poss': poss, 'box_protection': box_protection,
-        'cv_att': cv_att, 'label': determine_label()
+        'lambda_att': lambda_att,
+        'lambda_def': lambda_def,
+        'lambda_sp_att': lambda_sp_att,
+        'lambda_sp_def': lambda_sp_def,
+        'conv': conv,
+        'opp_conv': opp_conv,
+        'penetration': penetration,
+        'xg_per_touch': xg_per_touch,
+        'poss': poss,
+        'box_protection': box_protection,
+        'cv_att': cv_att,
+        'label': determine_label()
     }
 
+# ---------- 基础 λ 预测 (手工替代 XGBoost) ----------
 def predict_base_lambdas(home_f, away_f):
     home_att = home_f['lambda_att']
     away_def = away_f['lambda_def']
@@ -162,25 +171,36 @@ def predict_base_lambdas(home_f, away_f):
     a = (away_att + LEAGUE_AVG_XG - home_def * 0.95) / 2
     return {'h': max(0.3, h), 'a': max(0.3, a)}
 
-def apply_player_factors(lamH, lamA, home_style, away_style, home_inj, away_inj, mot, weather, ref):
+# ---------- 玩家修正 (支持主客队独立战意) ----------
+def apply_player_factors(lamH, lamA, home_style, away_style,
+                         home_inj, away_inj,
+                         mot_home, mot_away,
+                         weather, ref):
+    # 战术修正
     if home_style in STYLE_MATRIX and away_style in STYLE_MATRIX[home_style]:
         coeff_h, coeff_a = STYLE_MATRIX[home_style][away_style]
         lamH *= coeff_h
         lamA *= coeff_a
+    # 伤病
     if home_inj: lamH *= 0.85
     if away_inj: lamA *= 0.80
+    # 战意 (分别影响)
     mot_map = {1: 0.88, 2: 0.94, 3: 1.0, 4: 1.02, 5: 1.04}
-    lamH *= mot_map.get(mot, 1.0)
+    lamH *= mot_map.get(mot_home, 1.0)
+    lamA *= mot_map.get(mot_away, 1.0)
+    # 天气
     if weather == '雨':
         lamH *= 0.88; lamA *= 0.88
     elif weather == '大风':
         lamH *= 0.92; lamA *= 0.92
+    # 裁判 (点球期望微调)
     if ref == '严哨':
         lamH += 0.03; lamA += 0.03
     elif ref == '松哨':
         lamH *= 0.98; lamA *= 0.98
     return {'h': max(0.3, lamH), 'a': max(0.3, lamA)}
 
+# ---------- 双变量泊松 (独立 + 对角线强化) ----------
 def factorial(n):
     return math.factorial(n)
 
@@ -192,8 +212,10 @@ def generate_bivariate_poisson(lamH, lamA, rho=0.15, max_g=6):
     for i in range(max_g+1):
         for j in range(max_g+1):
             p = poisson_pmf(i, lamH) * poisson_pmf(j, lamA)
-            if i == j: p *= (1 + rho)
-            elif abs(i-j) == 1: p *= (1 - rho*0.5)
+            if i == j:
+                p *= (1 + rho)
+            elif abs(i-j) == 1:
+                p *= (1 - rho*0.5)
             mat[i, j] = p
     mat /= mat.sum()
     return mat

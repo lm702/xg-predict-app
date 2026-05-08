@@ -1,5 +1,6 @@
 import pandas as pd
 import numpy as np
+import math
 from io import BytesIO
 
 # ---------- 常量 ----------
@@ -181,7 +182,7 @@ def apply_player_factors(lamH, lamA, home_style, away_style, home_inj, away_inj,
     return {'h': max(0.3, lamH), 'a': max(0.3, lamA)}
 
 def factorial(n):
-    return np.math.factorial(n)
+    return math.factorial(n)
 
 def poisson_pmf(k, lam):
     return np.exp(-lam) * (lam**k) / factorial(k)
